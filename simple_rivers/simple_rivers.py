@@ -1,7 +1,8 @@
-import numpy as np
-import random
+
 import uuid
 
+from my_save import sxml_main
+from vector import vector
 
 class Pool:
 
@@ -124,6 +125,10 @@ class Pool:
             meta_info[cell]["waterlevel"] = max(
                 meta_info[cell]["waterlevel"], 0)
 
+class dummypoly:
+    def __init__(self):
+        self.center = vector.Vector(0,0,0)
+        self.points = []
 
 def generate_basic_data():
 
@@ -150,16 +155,18 @@ def generate_basic_data():
             left = (x-1, y, 0)
             right = (x+1, y, 0)
             directions = [up, down, left, right]
-            neighbors = []
+            neighbors = {}
             for p in directions:
                 if p in centers:
                     my_index = centers.index(p)
-                    neighbors.append(my_index)
+                    neighbors[my_index] = []
             all_neighbors[total_counter] = neighbors
             total_counter += 1
             y += 1
         x += 1
-
+    
+    
+    
     meta_info = basic_dict(centers, all_neighbors)
     test_crater_elevation(meta_info, xlen, ylen)
 
@@ -172,16 +179,52 @@ def basic_dict(centers, neighbors):
     m = len(centers)
     while c < m:
         meta_info[c] = {}
+        
+        meta_info[c]["polygon"] = dummypoly()
+        
+        this_center = vector.Vector(*centers[c])
+        points = []
+        diffs = [vector.Vector(1,1,0)*0.5,
+                vector.Vector(1,-1,0)*0.5,
+                vector.Vector(-1,-1,0)*0.5,
+                vector.Vector(-1,1,0)*0.5]
+                
+        for x in diffs:
+            points.append(tuple(this_center+x))
+            
+        meta_info[c]["polygon"].points = points
+        meta_info[c]["waterlevel"] = 0
         meta_info[c]["neighbors"] = neighbors[c]
         meta_info[c]["center"] = centers[c]
         # since everything is square, if we have less than 4 neighboring cells
         # it's on the edge of the map
+        
+        
+        
         if len(neighbors[c]) != 4:
             meta_info[c]["border"] = True
         else:
             meta_info[c]["border"] = False
+        
         c += 1
-
+    
+    for cell_index in meta_info:
+        points1 = meta_info[cell_index]["polygon"].points
+        for ni in meta_info[cell_index]["neighbors"]:
+            points2 = meta_info[ni]["polygon"].points
+            c2 = -1
+            list_of_tuples = []
+            while c2 < len(points1)-1:
+                pi1 = points1[c2]
+                pi2 = points1[c2+1]
+                if pi1 in points2 and pi2 in points2:
+                    # this avoids -1 stuff
+                    index1 = points1.index(pi1)
+                    index2 = points1.index(pi2)
+                    list_of_tuples.append((index1,index2))
+                c2 += 1
+            meta_info[cell_index]["neighbors"][ni] = list_of_tuples
+    
     return meta_info
 
 
@@ -198,15 +241,15 @@ def recursive_drain(meta_info, river_tree_system, cell_list):
 
 
 def test_crater_elevation(meta_info, xlen, ylen):
-    crater_center = np.array((7.5, 7.5, 0))
+    crater_center = vector.Vector(7.5, 7.5, 0)
     radius = 5
 
     for c in meta_info:
         center = xlen/2, ylen/2
-        p1 = np.array(meta_info[c]["center"])
+        p1 = vector.Vector(*meta_info[c]["center"])
         d = crater_center - p1
 
-        my_mag = np.linalg.norm(d)
+        my_mag = d.magnitude()
         elevation = 1-(abs(my_mag - 5)/radius)
 
         if my_mag < radius:
@@ -214,7 +257,7 @@ def test_crater_elevation(meta_info, xlen, ylen):
         if p1[0] > 7.5 and (6 < p1[1] < 9):
             elevation *= 0.6
         if elevation < 0.1:
-            elevation = 0.1 + random.random() * 0.15
+            elevation = 0.1
 
         meta_info[c]["elevation"] = elevation
 
@@ -239,11 +282,11 @@ def recalculate_slopes(meta_info):
             c1 = meta_info[cell]["center"]
             c2 = meta_info[neighborid]["center"]
 
-            c1 = np.array(c1)
-            c2 = np.array(c2)
+            c1 = vector.Vector(*c1)
+            c2 = vector.Vector(*c2)
 
             dvec = c2 - c1
-            dist = np.linalg.norm(dvec)
+            dist = dvec.magnitude()
 
             el2 = meta_info[neighborid]["elevation"]
             wl2 = meta_info[neighborid]["waterlevel"]
@@ -308,6 +351,130 @@ def recalculate_slopes(meta_info):
             meta_info[cell]["steepest slope"] = (
                 steepest_slope_id, steepest_slope)
 
+def full_simple_river_main():
+    
+    meta_info = generate_basic_data()
+    pools = {}
+    all_are_border_tiles = False
+    time_c = 0
+    my_max = 60
+    while all_are_border_tiles == False and time_c <  my_max:
+        all_are_border_tiles, my_trees = main_step(meta_info,pools,all_are_border_tiles)
+        
+        # if you want to do something each step, e.g.
+        # producing some kind of step by step output, do that here.
+        
+        time_c += 1
+        
+    #output_rivers(meta_info,my_trees,time_c)
+    make_save(meta_info,my_trees)
+    return meta_info,my_trees
+
+def make_save(meta_info,my_trees):
+    save_dict = {}
+    for cell in meta_info:
+        save_dict[cell] = {}
+        l = []
+        l2 = meta_info[cell]["polygon"].points
+        
+        for x in l2:
+            v = []
+            for x2 in x:
+                v.append(float(x2))
+            l.append(tuple(v)) 
+        
+        save_dict[cell]["points"] = l
+        save_dict[cell]["neighbors"]  = meta_info[cell]["neighbors"]
+        save_dict[cell]["elevation"] = float(meta_info[cell]["elevation"])
+        save_dict[cell]["river value"]  = meta_info[cell]["river value"]
+                
+    save_dict["rivertrees"] = my_trees
+    fn = "saved_rivers.xml"
+    save_dict = {"data":save_dict}
+    sxml_main.write(fn,save_dict)
+
+def main_step(meta_info,pools,all_are_border_tiles):
+    """
+    this main step is meant to be run inside of a loop
+    if "all_are_border_tiles" is true, "my trees" will contain
+    a full gradient tree for every single tile in map,
+    describing how all water will drain.
+    
+    if there are depressions that would fill  with water, I will
+    fill them with water, determine the outflow point and
+    erode the outflow path until the lowest point of that lake can drain
+    to the edge of the map
+    
+    if you want to keep a few lakes,
+    the best approach is probably to let this function run,
+    note the number of steps it took, and then run it again and stop early
+    
+    If you have specified a seed and the whole process is deterministic,
+    as it should be, there should be some lakes in the data.
+    """
+    # how will things flow?
+    recalculate_slopes(meta_info)
+    my_trees, depth_data, base_dict = build_river_tree_map(meta_info)
+    
+    # do all tiles drain to the edge of the map somehow?
+    all_are_border_tiles = True
+    for x in my_trees:
+        if meta_info[x]["border"] == False:
+            all_are_border_tiles = False
+            break
+    
+    # zero all diffs for this, apply some rain
+    rain_value_zeroing_step(meta_info,pools,0.01)
+    
+    for x in meta_info:
+        if x in depth_data:
+            meta_info[x]["river value"] = depth_data[x]
+    
+    # equalize the water in lakes / pools,#
+    # calculate flow diffs
+    # apply them
+    # equalize again
+    pool_loop(meta_info,pools)
+    
+    calculate_diffs(meta_info,pools)
+    diff_apply(meta_info)
+    
+    pool_loop(meta_info,pools)
+    
+    # maybe I have to reroute my drainage through my pools.
+    
+    # drain all water from all regular rivers and tiles
+    river_system_drain(meta_info,my_trees)
+    
+    # when I'm doing this and the last cell of that path is a 
+    # lake cell, I'm draining the lake cell, but I'm not cutting down
+    # the path.
+    
+    # also, it might be an idea to include lakes into the 
+    # river draining system.
+    
+    # go through my river / lake system and also drain
+    # all lakes that have some connection to the edge of the map
+    
+    current_level = []
+    my_paths = find_lake_draining_paths(meta_info,pools,my_trees,current_level)
+    my_paths = clean_up_paths(my_paths,pools)
+    
+    current_level = []
+    lake_edge_drain_paths = find_lake_to_edge_draining_paths(meta_info,pools,my_trees,current_level)
+    
+    # path erosion
+    # this will erode the river paths
+    # 
+    river_gradient_erosion(meta_info,my_paths)
+    river_gradient_erosion(meta_info,lake_edge_drain_paths)
+    path_list = [my_paths,lake_edge_drain_paths]
+    
+    clear_pool_members_via_paths(meta_info,path_list)
+
+    # I can also just not add rain water to cells that are being drained.
+    set_river_flag(meta_info,my_paths)
+    return all_are_border_tiles, my_trees
 
 def rain_value_zeroing_step(meta_info, pools, rain_value=0.05):
     for cell in meta_info:
@@ -543,7 +710,6 @@ def clean_up_paths(my_paths, pools):
         assert len(bool_list) == len(x)
         c = 0
         while c < len(bool_list)-1:
-            # print(x[c],bool_list[c])
             if start_saving:
                 new_path.append(x[c])
             if bool_list[c] == True and bool_list[c+1] == False:
@@ -671,3 +837,6 @@ def clear_pool_members_via_paths(meta_info, path_list):
                     if x in this_pool.member_cells:
                         this_pool.member_cells.remove(x)
                 meta_info[x]["pool"]=None
+
+if __name__=="__main__":
+    full_simple_river_main()

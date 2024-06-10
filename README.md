@@ -1,12 +1,26 @@
 # simple_rivers
 
-install
+install dependencies to get it working:
 ```
-pip install requirements.txt
-pip -m build 
+pip install uuid
+pip install git+https://github.com/BMaxV/my_xmlsave.git
+pip install git+https://github.com/BMaxV/vector.git
 ```
-then in `dist` install the procuded wheel
 
+after this, you should be able to go into the "simple_rivers" folder/directory, 
+
+```
+python3 simple_rivers.py
+```
+
+and that should produce an example XML file. Alternatively, look at where the save function saves it, and save it in a way you see fit.
+
+if you want to build / install it to use the functions from somewhere else:
+
+```
+pip -m build
+then in `dist` install the procuded wheel
+```
 
 So. Procedural landscapes are cool.
 
