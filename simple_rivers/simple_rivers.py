@@ -653,15 +653,21 @@ def river_gradient_erosion(meta_info, my_paths):
                 c += 1
 
 
+def set_river_flag(meta_info,my_paths):
+    for x in meta_info:
+        meta_info[x]["part of a river"]=False
+        for path in my_paths:
+            if x in path:
+                meta_info[x]["part of a river"]=True
+
 def clear_pool_members_via_paths(meta_info, path_list):
     """this is for multiple lists of paths"""
     # my_paths
     for path_set in path_list:
         for path in path_set:
             for x in path:
-                if x in pools:
-                    pool = pools[x]
-                    if x in pool.member_cells:
-                        pool.member_cells.remove(x)
-                    pools.pop(x)
-                    meta_info[x]["pool"] = None
+                this_pool=meta_info[x]["pool"]
+                if this_pool!=None:
+                    if x in this_pool.member_cells:
+                        this_pool.member_cells.remove(x)
+                meta_info[x]["pool"]=None
