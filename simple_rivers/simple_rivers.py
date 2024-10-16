@@ -276,7 +276,11 @@ def recalculate_slopes(meta_info):
 
         steepest_slope = -float("inf")
         steepest_slope_id = None
-
+        
+        # I need this to exist.
+        # I think. 90% sure.
+        assert len(meta_info[cell]["neighbors"]) > 0
+                
         for neighborid in meta_info[cell]["neighbors"]:
             # actually put in the distance, not just the height difference.
             c1 = meta_info[cell]["center"]
@@ -370,6 +374,29 @@ def full_simple_river_main():
     make_save(meta_info,my_trees)
     return meta_info,my_trees
 
+
+
+def simple_river_main(meta_info):
+    
+    pools = {}
+    all_are_border_tiles = False
+    time_c = 0
+    my_max = 60
+    while all_are_border_tiles == False and time_c <  my_max:
+        #print("yep")
+        all_are_border_tiles, my_trees = main_step(meta_info,pools,all_are_border_tiles)
+        
+        # if you want to do something each step, e.g.
+        # producing some kind of step by step output, do that here.
+        
+        time_c += 1
+        
+    print("stopped after",time_c,"out of",my_max)
+        
+    #output_rivers(meta_info,my_trees,time_c)
+    #make_save(meta_info,my_trees)
+    return meta_info,my_trees
+
 def make_save(meta_info,my_trees):
     save_dict = {}
     for cell in meta_info:
@@ -429,7 +456,9 @@ def main_step(meta_info,pools,all_are_border_tiles):
     for x in meta_info:
         if x in depth_data:
             meta_info[x]["river value"] = depth_data[x]
-    
+        else:
+            meta_info[x]["river value"] = 1 # weird?
+            
     # equalize the water in lakes / pools,#
     # calculate flow diffs
     # apply them
@@ -837,6 +866,78 @@ def clear_pool_members_via_paths(meta_info, path_list):
                     if x in this_pool.member_cells:
                         this_pool.member_cells.remove(x)
                 meta_info[x]["pool"]=None
+
+def unpack_river_values_neighbors(d):
+    neighbor_dict = {}
+    river_value_dict = {}
+    for cell in d:
+        sub_dict={}
+        for x in d[cell]["neighbors"]:
+            neighbor_value = d[cell]["neighbors"][x]
+            sub_dict[x]= neighbor_value[0]
+        neighbor_dict[cell] = sub_dict
+        
+        river_value_dict[cell]=d[cell]["river value"]
+    return neighbor_dict, river_value_dict
+
+def build_my_edge_list(neighbor_dict, river_value_dict, index, my_river_tuple_list,threshold_value=1):
+    """
+    I have code that's creating custom objects based
+    on the data relative to the neighbor, e.g. 
+    
+    "
+    do I want a door between tile A and tile B? 
+    If (value) > something: yes. 
+    Then record the edge between A and B.
+    "
+    
+    flat is the bool for "no, don't do anything"
+    
+    really this needs a river value dict and a neighbor dict.
+    
+    
+    hmmmmmmmmmmm.
+    the mydictionary [cell][propertyname1] -> value1
+    the mydictionary [cell][propertyname2] -> value2
+    is really convenient for the rivers,
+    but less so for the planet, where I'm layering 
+    different systems.
+    
+    
+    
+    
+    """
+    
+    flat = True
+    my_edge_list = []
+    if river_value_dict[index] > threshold_value:
+        flat = False
+        my_edge_list = []
+        for n_index in neighbor_dict[index]:
+            if (index,n_index) not in my_river_tuple_list:
+                continue
+            
+            edge_tuple = neighbor_dict[index][n_index]
+            
+            if river_value_dict[n_index] > threshold_value:
+                my_edge_list += [list(edge_tuple)]
+                
+    return my_edge_list, flat
+
+def recursive_river_tree_unpack(my_dict):
+    
+    my_tuple_list = []
+    for x in my_dict:
+        if my_dict[x]!=None:
+            lower_list = recursive_river_tree_unpack(my_dict[x])
+            other_keys = list(my_dict[x].keys())
+            for x2 in other_keys:
+                my_tuple_list.append((x,x2))
+                my_tuple_list.append((x2,x))
+            my_tuple_list += lower_list
+            
+    return my_tuple_list
+
 
 if __name__=="__main__":
     full_simple_river_main()
