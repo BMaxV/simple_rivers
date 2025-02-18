@@ -164,14 +164,28 @@ def generate_basic_data():
             total_counter += 1
             y += 1
         x += 1
-    
-    
-    
+        
     meta_info = basic_dict(centers, all_neighbors)
     test_crater_elevation(meta_info, xlen, ylen)
 
     return meta_info
 
+def find_starting_points(river_trees):
+    targets = []
+    keys = list(river_trees.keys())
+    for x in river_trees:
+        targets += list(river_trees[x])
+    
+    targets = set(targets)
+    keys = set(keys)
+    
+    print(len(targets))
+    print(len(keys))
+    
+    # so these are the keys that are not being targeted.
+    starting_points = keys.difference(targets)
+    starting_points = list(starting_points)
+    return starting_points
 
 def basic_dict(centers, neighbors):
     meta_info = {}
@@ -262,29 +276,58 @@ def test_crater_elevation(meta_info, xlen, ylen):
         meta_info[c]["elevation"] = elevation
 
 
-def recalculate_slopes(meta_info):
+def unpack_meta(meta_info):
+    elevation = {}
+    waterlevel = {}
+    neighbors = {}
+    centers = {}
+    for x in meta_info:
+        elevation[x]=meta_info[x]["elevation"]
+        waterlevel[x]=meta_info[x]["waterlevel"]
+        neighbors[x]=meta_info[x]["neighbors"]
+        centers[x]=meta_info[x]["center"]
+    return elevation, waterlevel, neighbors, centers
 
-    for cell in meta_info:
-        slopes = {}
-        biggest_diff = -float("inf")
-        el1 = meta_info[cell]["elevation"]
-        wl1 = meta_info[cell]["waterlevel"]
+def merge_slopes(meta_info,slopes,steepest_slopes):
+    for key in slopes:
+        meta_info[key]["slopes"]=slopes[key]
+        meta_info[key]["steepest slope"]=steepest_slopes[key]
+
+def recalculate_slopes(meta_info):
+    """
+    this actually doesn't take too many inputs,
+    they are just spread around in an unfortunate way.
+    """
+    
+    elevation, waterlevel, neighbors, centers = unpack_meta(meta_info)
+    slopes, steepest_slopes = find_gradients(elevation, waterlevel, neighbors, centers)
+    merge_slopes(meta_info,slopes,steepest_slopes)
+    
+def find_gradients(elevation, waterlevel, neighbors, centers):
+    slopes = {}
+    steepest_slopes = {}
+    for cell in elevation:
+        small_slopes = {}
+        
+        el1 = elevation[cell]
+        wl1 = waterlevel[cell]
 
         t1 = el1 + wl1
-        # my_el = meta_info[cell]["elevation"] + meta_info[cell]["waterlevel"]
+        
         index = None
 
         steepest_slope = -float("inf")
         steepest_slope_id = None
-        
+        slope_list = []
         # I need this to exist.
         # I think. 90% sure.
-        assert len(meta_info[cell]["neighbors"]) > 0
-                
-        for neighborid in meta_info[cell]["neighbors"]:
+        assert len(neighbors[cell]) > 0
+        
+        for neighborid in neighbors[cell]:
             # actually put in the distance, not just the height difference.
-            c1 = meta_info[cell]["center"]
-            c2 = meta_info[neighborid]["center"]
+            
+            c1 = centers[cell]
+            c2 = centers[neighborid]
 
             c1 = vector.Vector(*c1)
             c2 = vector.Vector(*c2)
@@ -292,68 +335,76 @@ def recalculate_slopes(meta_info):
             dvec = c2 - c1
             dist = dvec.magnitude()
 
-            el2 = meta_info[neighborid]["elevation"]
-            wl2 = meta_info[neighborid]["waterlevel"]
+            el2 = elevation[neighborid]
+            wl2 = waterlevel[neighborid]
 
             t2 = el2 + wl2
             diff = t1 - t2
 
-            if diff > steepest_slope and diff > 0:
-                steepest_slope = diff
-                steepest_slope_id = neighborid
+            slope_list.append((neighborid,diff))
 
             slope = diff / dist
 
             # this part is not needed for the calculations I'm doing
             # exactly here, but I think they're still useful
             # for a volume based approach.
-            if diff > 0:
-                # slope goes down hill.
-
-                # static relevant difference
-                H_sd = diff  # min(diff,wl1)
-
-                # inertia resisting difference
-                H_ir = 0
-
-                # H_sr is pure speed relevant h
-                if el1 > el2:
-                    H_sr = wl1
-                else:
-                    H_sr = wl1 - H_ir
-
-                slopes[neighborid] = (
-                    diff, dvec, dist, slope, H_sd, H_sr, H_ir)
-            else:
-                # Don't do anything in particular,
-                # this will be covered by this same function
-                # but from the perspective of the other cell.
-
-                # static relevant difference
-                H_sd = 0
-                # there is 0 static hydro based acceleration
-                # from this cell / slope / neighbor
-
-                # inertia resisting difference
-                # this is the difference in terrain I'm flowing uphill
-                # against
-                H_ir = (el2-el1)
-
-                # H_sr is pure speed relevant h
-                if el1 > el2:
-                    H_sr = wl1
-                else:
-                    H_sr = wl1 - H_ir
-
-                slopes[neighborid] = (
-                    diff, dvec, dist, slope, H_sd, H_sr, H_ir)
-
-        meta_info[cell]["slopes"] = slopes
+            
+            same_tup = [diff, dvec, dist, slope]
+            h_stuff = get_H_stuff(diff, el1, el2, wl1, wl2)
+            
+            slop_tup = tuple(same_tup + h_stuff)
+            small_slopes[neighborid] = slop_tup
+        
+        steepest_slope_id, steepest_slope = max(slope_list,key=lambda x:x[1])
+        
+        slopes[cell] = small_slopes
         if steepest_slope_id == None:
-            meta_info[cell]["steepest slope"] = (None, None)
+            steepest_slopes[cell] = (None, None)
         else:
-            meta_info[cell]["steepest slope"] = (
-                steepest_slope_id, steepest_slope)
+            slop_tup2 = (steepest_slope_id, steepest_slope)
+            steepest_slopes[cell] = slop_tup2
+    
+    return slopes, steepest_slopes
+    
+
+def get_H_stuff(diff, el1, el2, wl1, wl2):
+    if diff > 0:
+        # slope goes down hill.
+
+        # static relevant difference
+        H_sd = diff  # min(diff,wl1)
+
+        # inertia resisting difference
+        H_ir = 0
+
+        # H_sr is pure speed relevant h
+        if el1 > el2:
+            H_sr = wl1
+        else:
+            H_sr = wl1 - H_ir
+        
+    else:
+        # Don't do anything in particular,
+        # this will be covered by this same function
+        # but from the perspective of the other cell.
+
+        # static relevant difference
+        H_sd = 0
+        # there is 0 static hydro based acceleration
+        # from this cell / slope / neighbor
+
+        # inertia resisting difference
+        # this is the difference in terrain I'm flowing uphill
+        # against
+        H_ir = (el2-el1)
+
+        # H_sr is pure speed relevant h
+        if el1 > el2:
+            H_sr = wl1
+        else:
+            H_sr = wl1 - H_ir
+    h_stuff = [H_sd, H_ir, H_ir]
+    return h_stuff
 
 def full_simple_river_main():
     
@@ -440,6 +491,9 @@ def main_step(meta_info,pools,all_are_border_tiles):
     as it should be, there should be some lakes in the data.
     """
     # how will things flow?
+    
+    
+    
     recalculate_slopes(meta_info)
     my_trees, depth_data, base_dict = build_river_tree_map(meta_info)
     
@@ -635,6 +689,7 @@ def depth_first_recursive_value_add(my_dict, value_dict, mydepth):
 
 
 def pool_integrity_check(meta_info, pools):
+    """what does this do?"""
     # do I check everything?
     # yeah.
 
@@ -654,8 +709,10 @@ def pool_integrity_check(meta_info, pools):
 
         cell = pool.member_cells[0]
         new = [cell]
-
-        while True:
+        
+        c = 0
+        m = 1000
+        while True and c < 1000:
             new_new = []
 
             for x in new:
@@ -668,6 +725,8 @@ def pool_integrity_check(meta_info, pools):
             new = new_new
             if new_new == []:
                 break
+            c+=1
+        
         org_set = set(pool.member_cells)
         n_set = set(neighborlist)
         diff_list = list(org_set.difference(n_set))
@@ -728,35 +787,45 @@ def pool_loop(meta_info, pools):
 
 
 def clean_up_paths(my_paths, pools):
+    """
+    split paths based on whether they go through pools or not.
+    """
     new_paths = []
-    for x in my_paths:
+    for path in my_paths:
+        
         new_path = []
         bool_list = []
-        start_saving = False
-        for x2 in x:
-            bool_list.append(x2 in pools)
+        save_section = False
+        
+        for cell in path:
+            bool_list.append(cell in pools)
 
-        assert len(bool_list) == len(x)
         c = 0
         while c < len(bool_list)-1:
-            if start_saving:
-                new_path.append(x[c])
-            if bool_list[c] == True and bool_list[c+1] == False:
-                new_path += [x[c], x[c+1]]
-                start_saving = True
+            
+            this_in_pool = (bool_list[c] == True)
+            next_not_in_pool = (bool_list[c+1] == False)
+            
+            if save_section:
+                new_path.append(path[c])
+            
+            # turn it on
+            if this_in_pool and next_not_in_pool:
+                new_path += [path[c], path[c+1]]
+                save_section = True
                 c += 1
-
-            elif bool_list[c] == False and bool_list[c+1] == True:
-                start_saving = False
-                new_path.append(x[c+1])
+            
+            # turn it off
+            elif not this_in_pool and not next_not_in_pool:
+                save_section = False
+                new_path.append(path[c+1])
                 c += 1
+                
             c += 1
+            
         if new_path != [] and len(new_path) > 1:
             new_paths.append(new_path)
-    # new_new_paths = []
-    # for path in new_paths:
-     #   new_new_paths.append(tuple(path))
-    # new_paths= list(set(new_new_paths))
+    
     return new_paths
 
 
