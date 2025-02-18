@@ -18,7 +18,22 @@ class TestMyRivers(unittest.TestCase):
         
         assert slopes == {1: {2: (-5, (1, 0, 0), 1.0, -5.0, 0, 5, 5)}, 2: {1: (5, (-1, 0, 0), 1.0, 5.0, 5, 0, 0)}}
         assert steepest_slopes == {1: (2, -5), 2: (1, 5)}
-
+    
+    def test_build_river_tree_map(self):
+        # this tells me nothing... meh.
+        
+        meta_info = {}
+        r = simple_rivers.build_river_tree_map(meta_info)
+    
+    def test_make_nested(self):
+        
+        layer = [1]
+        inverted = {1:[2],
+                    2:[3],}
+   
+        trees = simple_rivers.make_nested_new(layer, inverted)
+        assert trees == {1:{2:{3:None}}}
+    
 def test_single():
     single = TestMyRivers()
     

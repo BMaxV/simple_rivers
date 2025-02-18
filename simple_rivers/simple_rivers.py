@@ -494,8 +494,13 @@ def main_step(meta_info,pools,all_are_border_tiles):
     
     
     
-    recalculate_slopes(meta_info)
-    my_trees, depth_data, base_dict = build_river_tree_map(meta_info)
+    #recalculate_slopes(meta_info)
+    
+    elevation, waterlevel, neighbors, centers = unpack_meta(meta_info)
+    slopes, steepest_slopes = find_gradients(elevation, waterlevel, neighbors, centers)
+    merge_slopes(meta_info,slopes,steepest_slopes)
+    
+    my_trees, depth_data, base_dict = build_river_tree_map(steepest_slopes)
     
     # do all tiles drain to the edge of the map somehow?
     all_are_border_tiles = True
@@ -578,41 +583,59 @@ def rain_value_zeroing_step(meta_info, pools, rain_value=0.05):
         else:
             meta_info[cell]["pool"] = None
 
-
-def build_river_tree_map(meta_info):
-    my_dict = {}
-
-    temp = {}
+def find_flow_direction(steepest_slopes):
+    
     flow_direction = {}
-    for x in meta_info:
-        steepestid, steepest = meta_info[x]["steepest slope"]
+    for cell_id in steepest_slopes:
+        steepestid, steepest = steepest_slopes[cell_id]
         if steepestid != None:
             if steepestid not in flow_direction:
-                flow_direction[steepestid] = [x]
+                flow_direction[steepestid] = [cell_id]
             else:
-                flow_direction[steepestid].append(x)
+                flow_direction[steepestid].append(cell_id)
+    return flow_direction
 
-    visited = []
-    full = {}
-    for x in flow_direction:
-        this = make_nested(flow_direction, x, visited)
-        full[x] = this
+def make_nested_new(layer,inverted_flow):
+    sub_tree = {}
+    for x in layer:
+        if x in inverted_flow:
+            new_layer=inverted_flow[x]
+            r=make_nested_new(new_layer,inverted_flow)
+            sub_tree[x]=r
+        else:
+            sub_tree[x]=None
+    return sub_tree
 
-    for x in visited:
-        if x in full:
-            full.pop(x)
-
+def build_river_tree_map(steepest_slopes):
+    
+    # so this is a dict, pointing to list of ids, where
+    # it's flowing. but I think... these lists are just 1 long?
+    #flow_direction = find_flow_direction(steepest_slopes)
+    
+    inverted_flow = {}
+    for key1 in steepest_slopes:
+        other_id, d_h = steepest_slopes[key1]
+        inverted_flow[other_id] = key1
+    
+    keys1 = set(list(steepest_slopes.keys()))
+    keys2 = set(list(inverted_flow.keys()))
+    roots = list(keys1.difference(keys2))
+    
+    layer = list(roots)
+    trees = make_nested_new(layer,inverted_flow)
+        # that's dumb, I don't want to remove, I want to never add this.
+    
     my_value_dict = {}
-    depth_first_recursive_value_add(full, my_value_dict, 0)
+    depth_first_recursive_value_add(trees, my_value_dict, 0)
 
-    return full, my_value_dict, flow_direction
+    return trees, my_value_dict, inverted_flow
 
 
-def make_nested(a, value, visited):
+def make_nested(flow_direction, value, visited):
     full_ret_d = {}
-    if value in a:
-        for child in a[value]:
-            ret_d = make_nested(a, child, visited)
+    if value in flow_direction:
+        for child in flow_direction[value]:
+            ret_d = make_nested(flow_direction, child, visited)
             full_ret_d[child] = ret_d
             visited.append(child)
     else:
