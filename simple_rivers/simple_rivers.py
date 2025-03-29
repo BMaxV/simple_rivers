@@ -179,9 +179,6 @@ def find_starting_points(river_trees):
     targets = set(targets)
     keys = set(keys)
     
-    print(len(targets))
-    print(len(keys))
-    
     # so these are the keys that are not being targeted.
     starting_points = keys.difference(targets)
     starting_points = list(starting_points)
@@ -291,7 +288,8 @@ def unpack_meta(meta_info):
 def merge_slopes(meta_info,slopes,steepest_slopes):
     for key in slopes:
         meta_info[key]["slopes"]=slopes[key]
-        meta_info[key]["steepest slope"]=steepest_slopes[key]
+        if key in steepest_slopes:
+            meta_info[key]["steepest slope"]=steepest_slopes[key]
 
 def recalculate_slopes(meta_info):
     """
@@ -304,7 +302,13 @@ def recalculate_slopes(meta_info):
     merge_slopes(meta_info,slopes,steepest_slopes)
     
 def find_gradients(elevation, waterlevel, neighbors, centers):
+    # this is ALL connections.
     slopes = {}
+    
+    # this is directional stuff.
+    down = {}
+    up = {}
+    
     steepest_slopes = {}
     for cell in elevation:
         small_slopes = {}
@@ -358,13 +362,24 @@ def find_gradients(elevation, waterlevel, neighbors, centers):
         steepest_slope_id, steepest_slope = max(slope_list,key=lambda x:x[1])
         
         slopes[cell] = small_slopes
-        if steepest_slope_id == None:
+        if steepest_slope_id == None or steepest_slope <=0:
             steepest_slopes[cell] = (None, None)
         else:
+            
             slop_tup2 = (steepest_slope_id, steepest_slope)
             steepest_slopes[cell] = slop_tup2
+            
+            # there is only one down stream direction
+            if cell not in down:
+                down[cell] = steepest_slope_id
+                
+            # but there can be more than upstream one.
+            if steepest_slope_id not in up:
+                up[steepest_slope_id] = [cell]
+            else:
+                up[steepest_slope_id].append(cell)
     
-    return slopes, steepest_slopes
+    return slopes, steepest_slopes, up, down
     
 
 def get_H_stuff(diff, el1, el2, wl1, wl2):
@@ -434,18 +449,14 @@ def simple_river_main(meta_info):
     time_c = 0
     my_max = 60
     while all_are_border_tiles == False and time_c <  my_max:
-        #print("yep")
+        
         all_are_border_tiles, my_trees = main_step(meta_info,pools,all_are_border_tiles)
         
         # if you want to do something each step, e.g.
         # producing some kind of step by step output, do that here.
         
         time_c += 1
-        
-    print("stopped after",time_c,"out of",my_max)
-        
-    #output_rivers(meta_info,my_trees,time_c)
-    #make_save(meta_info,my_trees)
+    
     return meta_info,my_trees
 
 def make_save(meta_info,my_trees):
@@ -470,6 +481,14 @@ def make_save(meta_info,my_trees):
     fn = "saved_rivers.xml"
     save_dict = {"data":save_dict}
     sxml_main.write(fn,save_dict)
+
+def get_roots_branches(up,down):
+    up_keys = set(up.keys())
+    down_keys = set(down.keys())
+    
+    roots = list(up_keys.difference(down_keys))
+    branches = list(down_keys.difference(up_keys))
+    return roots,branches
 
 def main_step(meta_info,pools,all_are_border_tiles):
     """
@@ -497,10 +516,11 @@ def main_step(meta_info,pools,all_are_border_tiles):
     #recalculate_slopes(meta_info)
     
     elevation, waterlevel, neighbors, centers = unpack_meta(meta_info)
-    slopes, steepest_slopes = find_gradients(elevation, waterlevel, neighbors, centers)
-    merge_slopes(meta_info,slopes,steepest_slopes)
+    slopes, steepest_slopes, up, down = find_gradients(elevation, waterlevel, neighbors, centers)
+    merge_slopes(meta_info, slopes, steepest_slopes)
+    roots, branches = get_roots_branches(up,down)
     
-    my_trees, depth_data, base_dict = build_river_tree_map(steepest_slopes)
+    my_trees, depth_data = build_river_tree_map(roots,up)
     
     # do all tiles drain to the edge of the map somehow?
     all_are_border_tiles = True
@@ -595,40 +615,30 @@ def find_flow_direction(steepest_slopes):
                 flow_direction[steepestid].append(cell_id)
     return flow_direction
 
-def make_nested_new(layer,inverted_flow):
+def make_nested_new(layer,up):
     sub_tree = {}
     for x in layer:
-        if x in inverted_flow:
-            new_layer=inverted_flow[x]
-            r=make_nested_new(new_layer,inverted_flow)
-            sub_tree[x]=r
+        if x in up:
+            new_layer=up[x]
+            r = make_nested_new(new_layer,up)
+            sub_tree[x] = r
         else:
             sub_tree[x]=None
     return sub_tree
 
-def build_river_tree_map(steepest_slopes):
+def build_river_tree_map(roots,up,rain_value_dict = None):
     
     # so this is a dict, pointing to list of ids, where
     # it's flowing. but I think... these lists are just 1 long?
     #flow_direction = find_flow_direction(steepest_slopes)
     
-    inverted_flow = {}
-    for key1 in steepest_slopes:
-        other_id, d_h = steepest_slopes[key1]
-        inverted_flow[other_id] = key1
-    
-    keys1 = set(list(steepest_slopes.keys()))
-    keys2 = set(list(inverted_flow.keys()))
-    roots = list(keys1.difference(keys2))
-    
-    layer = list(roots)
-    trees = make_nested_new(layer,inverted_flow)
+    trees = make_nested_new(roots,up)
         # that's dumb, I don't want to remove, I want to never add this.
     
     my_value_dict = {}
-    depth_first_recursive_value_add(trees, my_value_dict, 0)
-
-    return trees, my_value_dict, inverted_flow
+    depth_first_recursive_value_add(trees, my_value_dict, 0, rain_value_dict=rain_value_dict)
+    
+    return trees, my_value_dict
 
 
 def make_nested(flow_direction, value, visited):
@@ -694,17 +704,20 @@ def calculate_diffs(meta_info, pools):
         meta_info[other_id]["waterdiff"] += my_diff * 0.2
 
 
-def depth_first_recursive_value_add(my_dict, value_dict, mydepth):
-
+def depth_first_recursive_value_add(my_dict, value_dict, mydepth, rain_value_dict=None):
+    
     value = 0
     for x in my_dict:
-
         if my_dict[x] == None:
-            xvalue = 1
+            if rain_value_dict == None:
+                xvalue = 1
+            else:
+                xvalue = rain_value_dict[x]
         else:
+            
             xvalue = depth_first_recursive_value_add(
-                my_dict[x], value_dict, mydepth+1)
-
+                my_dict[x], value_dict, mydepth+1, rain_value_dict=rain_value_dict)
+        
         value_dict[x] = xvalue
         value += xvalue
 
